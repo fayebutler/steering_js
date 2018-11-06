@@ -28,6 +28,14 @@ class Vector {
     return this;
   }
 
+  div_int(num) {
+    if(num != 0.0) {
+      this.x = this.x / num;
+      this.y = this.y / num;
+    }
+    return this;
+  }
+
   magnitude() {
     return Math.sqrt((this.x * this.x) + (this.y * this.y));
   }
@@ -68,44 +76,136 @@ canvas.addEventListener('mousemove', function(evt) {
   var mousePos = getMousePos(canvas, evt);
 }, false);
 
+var attractor;
+
+canvas.addEventListener('click', function(evt) {
+  console.log('click');
+  var rect = canvas.getBoundingClientRect();
+  var attractPos = new Vector((evt.clientX - rect.left), (evt.clientY - rect.top));
+  attractor = attractPos;
+}, false);
+
+var id = 0;
+
 class Entity {
-  constructor() {
+  constructor(location) {
     this.width = 10;
     this.height = 10;
     this.color = 'black';
+    this.id = id++;
 
-    this.location = new Vector(250,250);
+    this.location = new Vector(250, 250);
     this.velocity = new Vector(0,0);
     this.acceleration = new Vector(0,0);
-    this.maxSpeed = 1;
-    this.maxForce = 0.1;
+    this.maxSpeed = 2;
+    this.maxForce = 10;
+    this.mass = 1;
+
+    this.wallAvoidanceOn = true;
+    this.wanderOn = true;
+    this.arriveOn = false;
+    this.steerOn = false;
+    this.fleeOn = false;
+    this.separationOn = true;
+
+    this.wallAvoidanceWeight = 0.6;
+    this.wanderWeight = 1;
+    this.arriveWeight = 1;
+    this.seekWeight = 1;
+    this.fleeWeight = 1;
+    this.separationWeight = 0.2;
+
+    this.crosshair = new Vector(0,0);
+    this.neighbours = []
 
   }
 
   update() {
+    this.acceleration = this.calculatePrioritizedSum().div_int(this.mass);
     this.velocity.add(this.acceleration);
     this.velocity.limit(this.maxSpeed);
-    // console.log('speed ', this.velocity.magnitude());
     this.location.add(this.velocity);
-    // console.log('location ', this.location);
     this.acceleration = new Vector(0,0);
   }
 
   draw() {
+    ctx.fillStyle = 'black';
     ctx.fillRect(this.location.x, this.location.y, this.width, this.height)
   }
 
-  applyForce(force) {
-    this.acceleration.add(force);
-  }
-
   accumulateForce(total, force) {
+    var currentMag = total.magnitude();
+    var additionalMag = force.magnitude();
+    var forceRemaining = this.maxForce - currentMag;
+    if(forceRemaining <= 0) {
+      return false;
+    } else if( additionalMag > forceRemaining ){
+      return false;
+    } else {
+      return true;
+    }
 
   }
 
   calculatePrioritizedSum() {
     //need to be able to switch on/off behaviours and set weights
     var totalSteeringForce = new Vector(0,0);
+
+    if(this.wallAvoidanceOn) {
+      var steer = this.wallAvoidance().mult_int(this.wallAvoidanceWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    if(this.separationOn) {
+      var steer = this.separation(this.neighbours).mult_int(this.separationWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    if(this.arriveOn) {
+      var steer = this.arrive(this.crosshair).mult_int(this.arriveWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    if(this.seekOn) {
+      var steer = this.seek(this.crosshair).mult_int(this.seekWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    if(this.fleeOn) {
+      var steer = this.flee(this.crosshair).mult_int(this.fleeWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    if(this.wanderOn) {
+      var steer = this.wander().mult_int(this.wanderWeight);
+      if( this.accumulateForce(totalSteeringForce, steer) ) {
+        totalSteeringForce.add(steer);
+      } else {
+        return totalSteeringForce;
+      }
+    }
+
+    return totalSteeringForce;
 
   }
 
@@ -157,26 +257,32 @@ class Entity {
     // find random point on circle
     // head to towards that point
     //this.velocity //current heading
-    const r = 50;
+    const r = 1;
+    const dist = 0.2
     this.heading = new Vector(this.velocity.x, this.velocity.y);
     const a = Math.random() * ((2*Math.PI) - 0) + 0;
     this.heading.normalise();
-    const c_origin = this.heading.mult_int(0.2);
+    const c_origin = this.heading.mult_int(dist);
     const x = c_origin.x + r * Math.cos(a);
     const y = c_origin.y + r * Math.sin(a);
 
     var steer = new Vector(x, y).add(this.heading);
-    steer.limit(this.maxForce);
-
-    this.applyForce(steer);
+    return steer
   }
 
   wallAvoidance() {
-      const detectionRad = 200;
+    // I need to sort this out a bit more
+    // should have a data structure that holds where the walls are and run against that
+
+      const detectionRad = 20;
       // should addin 2 more feelers 45 degrees left/right from front feeler then do a loop over the code for each feeler
       var frontFeeler = new Vector(this.location.x + (this.velocity.x * detectionRad), this.location.y + (this.velocity.y * detectionRad));
 
-      console.log('feeler ', frontFeeler);
+      // var pixel = ctx.getImageData(x, y, 1, 1);
+      // var data = pixel.data;
+      // var rgba = 'rgba(' + data[0] + ', ' + data[1] +
+      //            ', ' + data[2] + ', ' + (data[3] / 255) + ')';
+
       var steer = new Vector(this.velocity.x, this.velocity.y);
       if(frontFeeler.x >= 500) {
           // gone out side so turn it around
@@ -189,26 +295,62 @@ class Entity {
       } else if(frontFeeler.y <= 0) {
           steer.y = -this.velocity.y;
       }
-      steer.limit(this.maxForce);
-      console.log('steer ', steer);
-      this.applyForce(steer);
+      // steer.limit(this.maxForce);
+      return steer;
   }
+
+  separation( neighbours ) {
+    var steer = new Vector(0, 0);
+
+    for(var i=0; i<neighbours.length; i++) {
+      var neighbour = neighbours[i];
+      var vectorToNeighbour = new Vector((neighbour.location.x - this.location.x), (neighbour.location.y - this.location.y));
+      var steer = new Vector(0, 0);
+      vectorToNeighbour.normalise();
+      vectorToNeighbour.div_int(-(vectorToNeighbour.magnitude()));
+      steer.add(vectorToNeighbour);
+    }
+    return steer;
+  }
+
 }
 
-let entity1 = new Entity();
-entity1.draw();
+const num_entities = 5;
+var entities = [];
+for(var i=0; i<num_entities; i++) {
+  entities.push(new Entity());
+}
 
 function update() {
   // console.log('mouse pos ', currentMousePos)
-  entity1.update();
-  // entity1.seek(new Vector(500, 500));
-  entity1.wallAvoidance();
+  if (attractor) {
+    entities.forEach(function(entity) {
+      entity.arriveOn = true;
+      entity.crosshair = attractor;
+    });
+  }
+  entities.forEach(function(entity, index) {
+    //remove current entity
+    var removed = entities.filter(function(x, n) {
+      if(n != index) {
+        return x;
+      }
+    })
+    entity.neighbours = removed;
+    entity.update();
+  });
   draw();
 }
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  entity1.draw();
+  if (attractor) {
+    ctx.fillStyle = 'orange';
+    ctx.fillRect(attractor.x, attractor.y, 5, 5);
+  }
+  entities.forEach(function(entity) {
+    entity.draw();
+  });
 }
 
 update();
